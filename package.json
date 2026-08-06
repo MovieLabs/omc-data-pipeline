@@ -1,0 +1,75 @@
+{
+  "name": "data-pipeline",
+  "version": "1.0.0",
+  "description": "Process various data files for OMC ingestion",
+  "license": "ISC",
+  "author": "DML",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "extract": "node src/cli.js extract",
+    "validate": "node src/cli.js validate",
+    "omc": "node src/cli.js omc",
+    "pipelines": "node src/cli.js pipelines",
+    "run": "node src/cli.js run",
+    "serve": "node server.js",
+    "lint": "eslint src index.js test",
+    "jsdoc": "jsdoc -c jsdoc.json",
+    "build:types": "tsc",
+    "link:local": "npm link omc-util",
+    "unlink:local": "npm unlink omc-util && npm install",
+    "test": "node --test --test-reporter=spec test/**/*.test.js"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.2.5",
+    "omc-util": "git+https://github.com/MovieLabs/omc-util.git#semver:^1.4.0",
+    "papaparse": "^5.5.3",
+    "pdfjs-dist": "^6.1.200"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "@stylistic/eslint-plugin": "^5.8.0",
+    "docdash": "^2.0.2",
+    "eslint": "^9.39.2",
+    "eslint-plugin-import": "^2.31.0",
+    "globals": "^16.0.0",
+    "jsdoc": "^4.0.4",
+    "typescript": "5.7"
+  },
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./pipelines": {
+      "types": "./types/src/pipelines/index.d.ts",
+      "import": "./src/pipelines/index.js"
+    },
+    "./omc": {
+      "types": "./types/src/omc/index.d.ts",
+      "import": "./src/omc/index.js"
+    },
+    "./sources": {
+      "types": "./types/src/sources/index.d.ts",
+      "import": "./src/sources/index.js"
+    },
+    "./lib": {
+      "types": "./types/src/lib/index.d.ts",
+      "import": "./src/lib/index.js"
+    }
+  },
+  "bin": {
+    "data-pipeline": "./src/cli.js"
+  },
+  "files": [
+    "index.js",
+    "server.js",
+    "src",
+    "types",
+    "README.md",
+    "docs"
+  ]
+}

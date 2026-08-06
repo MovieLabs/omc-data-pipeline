@@ -1,0 +1,36 @@
+{
+  "opts": {
+    "template": "node_modules/docdash",
+    "destination": "docs/jsdoc",
+    "recurse": true
+  },
+  "recurseDepth": 10,
+  "sourceType": "module",
+  "source": {
+    "include": [
+      "index.js",
+      "src/types.js",
+      "src"
+    ],
+    "includePattern": ".+\\.(m?js(doc|x)?)$",
+    "exclude": [
+      "src/cli.js"
+    ]
+  },
+  "plugins": [
+    "plugins/markdown"
+  ],
+  "docdash": {
+    "static": true,
+    "sort": true,
+    "search": true,
+    "collapse": true,
+    "typedefs": true,
+    "removeQuotes": "none"
+  },
+  "templates": {
+    "default": {
+      "useLongnameInNav": true
+    }
+  }
+}

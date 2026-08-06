@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+
+# Generated: JSDoc site, rebuilt by `npm run jsdoc`
+docs/jsdoc/
+
+# types/ is deliberately committed, matching omc-util. This package is consumed as a git
+# dependency by a Docker build with no credentials; shipping the built .d.ts files means npm
+# never has to install TypeScript and run `tsc` inside the image to satisfy a `prepare` script.

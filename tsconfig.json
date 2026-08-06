@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "declarationDir": "./types",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": false
+  },
+  "include": [
+    "index.js",
+    "src/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "docs",
+    "WWDOAT"
+  ]
+}
