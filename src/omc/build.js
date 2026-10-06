@@ -1,54 +1,29 @@
-import { omcEdges } from 'omc-util';
+import { omcEdges, omcMerge, omcTemplate } from 'omc-util';
+// The per-value rules are shared with omc-util's row-oriented interpreter rather than kept in two
+// places: a cast is a cast, and a delimited cell splits the same way whoever is reading it.
+// `writeShaped` replaces a naive dotted-path writer this file used to carry — see setPath below.
+import { cast, identityColumn, splitList, writeShaped } from 'omc-util/mapping';
 
 import '../types.js'; // Type definitions, resolved globally by JSDoc
 
 import { createEntity, entityRef, resolveOptions } from './entity.js';
 
 /**
- * Split a delimited cell into trimmed, de-duplicated, sorted members.
+ * Write a property path into an object, placing it as the schema says.
  *
- * Sorting matters: a source that writes the same set in two orders — `13; 15` on one row and
- * `15; 13` on another — would otherwise produce two different sets of edges for one
- * relationship. Numeric-looking members sort numerically so `2` precedes `10`.
+ * This replaced a dotted-path writer that created plain objects the whole way down. That was wrong
+ * wherever OMC declares an array: `annotation.title` produced `{annotation: {title}}`, which the
+ * schema rejects, and there was no way at all to address a second element. `writeShaped` asks the
+ * shape, so an array-of-object property becomes an array, sibling sub-paths merge into one element,
+ * and `annotation[1].title` addresses what it says.
  *
- * @param {*} value - The cell value
- * @param {string} delimiter - What to split on
- * @returns {Array<string>} The members
+ * @param {Object} target - The properties object being built
+ * @param {string} path - Dotted path, optionally with `[n]` indices
+ * @param {*} value - The value to write
+ * @param {Object} shape - The entity's shape, from `omcTemplate.shape`
  */
-function splitList(value, delimiter) {
-    if (value === null || value === undefined || value === '') return [];
-    return [...new Set(String(value).split(delimiter).map((s) => s.trim()).filter(Boolean))]
-        .sort((a, b) => (Number(a) - Number(b)) || a.localeCompare(b));
-}
-
-/** Cast a value to the type OMC declares for the property. */
-function cast(value, as) {
-    if (value === null || value === undefined || value === '') return null;
-    if (as === 'number') {
-        const n = Number(value);
-        return Number.isNaN(n) ? null : n;
-    }
-    if (as === 'boolean') return value === true || value === 'true' || value === 'Y';
-    if (as === 'string') return String(value);
-    // OMC dateTime properties (Provenance.createdOn) reject a date-only value. A source that
-    // records only the date is promoted to midnight UTC — the day is asserted, the time is
-    // a convention, not a claim that the event happened at 00:00.
-    if (as === 'datetime') {
-        return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00Z` : String(value);
-    }
-    return value;
-}
-
-/** Write a possibly-dotted path (`slateName.fullName`) into an object. */
-function setPath(target, path, value) {
-    const segments = path.split('.');
-    const leaf = segments.pop();
-    let node = target;
-    for (const segment of segments) {
-        node[segment] ??= {};
-        node = node[segment];
-    }
-    node[leaf] = value;
+function setPath(target, path, value, shape) {
+    writeShaped(target, path.split('.'), value, shape);
 }
 
 /**
@@ -142,12 +117,19 @@ const buildNotes = (entries, row) => (entries ?? [])
 function buildCustomData(mapping, rows, consumed) {
     if (!mapping) return [];
     const {
-        domain, namespace, schema, rest, exclude = [],
+        domain, namespace, schema, rest, exclude = [], include = null,
     } = mapping;
     if (!rest) return [];
     const skip = new Set([...consumed, ...exclude]);
+    // An allow-list, for the case `exclude` answers badly: where two entities are built from one
+    // wide table, saying which columns an entity takes is one list, while saying which it refuses
+    // is that list's complement — and the complement has to be extended every time the source grows
+    // a field, silently mis-filing it until someone notices. With `include` set, a new column lands
+    // on whichever entity did not name one, which is the safer default.
+    const allowed = include ? new Set(include) : null;
 
-    const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((k) => !skip.has(k));
+    const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))]
+        .filter((k) => !skip.has(k) && (!allowed || allowed.has(k)));
 
     const isPresent = (v) => v !== null && v !== undefined && v !== '';
 
@@ -186,6 +168,37 @@ function groupRows(rows, key, skipWhenKeyEmpty) {
 }
 
 /**
+ * The rows behind each entity of a mapping, whichever grain it declares.
+ *
+ * At `group` grain a key's rows are resolved together — one scene from sixteen takes. At `row` grain
+ * each row builds its own entity, and rows sharing a key are folded afterwards; they are still
+ * collected per key here because an entity's edges are drawn from every row that describes it.
+ *
+ * @param {DataPipeline.EntityMapping} mapping - The mapping
+ * @param {DataPipeline.Table} rows - Its table
+ * @returns {Map<string, DataPipeline.Table>} Rows by key value
+ */
+function rowsByKey(mapping, rows) {
+    const { grain = 'row', skipWhenKeyEmpty = false } = mapping;
+    // Whatever identifies the entity, which is not always `key`: one that maps a column onto
+    // `identifier[0].identifierValue` names itself and needs none. Asked rather than read, so this
+    // agrees with the reference an edge records — join on one column and group by another and the
+    // lookup finds nothing. Read straight off `.key`, a key-less mapping grouped every row under
+    // "undefined" and produced a single entity for the whole table.
+    const key = identityColumn(mapping);
+    if (grain === 'group') return groupRows(rows, key, skipWhenKeyEmpty);
+    const groups = new Map();
+    for (const row of rows) {
+        const value = row[key];
+        if (skipWhenKeyEmpty && (value === null || value === undefined || value === '')) continue;
+        const asKey = String(value);
+        if (!groups.has(asKey)) groups.set(asKey, []);
+        groups.get(asKey).push(row);
+    }
+    return groups;
+}
+
+/**
  * Columns a mapping consumes as real OMC properties, so `customData.rest` does not repeat
  * them. Lookup sources are not consumed: the column feeding a lookup is a join key, and the
  * source's own value for it is still worth carrying.
@@ -206,6 +219,51 @@ function consumedColumns(mapping) {
 }
 
 /**
+ * Fold one mapping's entities into the registry, merging where an entity already exists.
+ *
+ * Two mappings may build the same entityType from different tables — one row per file describing an
+ * Asset, one row per comment adding an annotation to it. They agree on the entity because they seed
+ * the identifier from the same key, so the second must *add to* the first rather than replace it.
+ *
+ * `mergeEntity` is what makes that safe: it unions arrays by value, so distinct annotations
+ * accumulate while an identical one collapses — which is also why a re-run does not duplicate them.
+ * `prefer: 'existing'` means the first mapping to state a property owns it; a later mapping fills
+ * gaps and cannot overwrite.
+ *
+ * @param {Map<string, Map<string, OmcEntity>>} registry - Built entities, by type then key
+ * @param {string} entityType - The type this mapping built
+ * @param {Map<string, OmcEntity>} entities - What it built, by key
+ * @param {Array<DataPipeline.MappingNote>} notes - Appended to in place
+ */
+function mergeInto(registry, entityType, entities, notes) {
+    const existing = registry.get(entityType);
+    if (!existing) {
+        registry.set(entityType, entities);
+        return;
+    }
+    for (const [key, entity] of entities) {
+        const held = existing.get(key);
+        if (!held) {
+            existing.set(key, entity);
+            continue;
+        }
+        const merged = omcMerge.mergeEntity(held, entity, { prefer: 'existing', emptyAsNull: true });
+        if (!merged) {
+            // Only an entityType or schemaVersion disagreement can produce this, and neither is
+            // reachable here — same type, same options. Reported rather than dropped silently so a
+            // future caller that does reach it is not left with a short count.
+            notes.push({
+                kind: 'entityNotMerged',
+                where: `${entityType} ${key}`,
+                detail: 'a second mapping built this entity but it could not be merged',
+            });
+            continue;
+        }
+        existing.set(key, merged);
+    }
+}
+
+/**
  * Apply one {@link DataPipeline.EntityMapping} to a table set.
  *
  * @param {DataPipeline.EntityMapping} mapping - What to build and from where
@@ -215,26 +273,27 @@ function consumedColumns(mapping) {
  * @returns {Map<string, OmcEntity>} Entities by key
  */
 function buildEntityType(mapping, tables, options, notes) {
-    const {
-        entityType, table, grain = 'row', key, skipWhenKeyEmpty = false,
-    } = mapping;
+    const { entityType, table, grain = 'row' } = mapping;
 
     const rows = tables[table];
     if (!rows) throw new Error(`Mapping for ${entityType} reads table "${table}", which is not present`);
 
-    const groups = grain === 'group'
-        ? groupRows(rows, key, skipWhenKeyEmpty)
-        : new Map(rows
-            .filter((r) => !skipWhenKeyEmpty || (r[key] !== null && r[key] !== undefined && r[key] !== ''))
-            .map((r) => [String(r[key]), [r]]));
-
+    const groups = rowsByKey(mapping, rows);
     const consumed = consumedColumns(mapping);
     const entities = new Map();
+    const shape = omcTemplate.shape({ entityType, schemaVersion: options.schemaVersion });
 
-    for (const [keyValue, groupRowsForKey] of groups) {
+    /**
+     * Build one entity from the rows that resolve together.
+     *
+     * @param {string} keyValue - The key this entity is seeded from
+     * @param {DataPipeline.Table} resolveFrom - The rows to read
+     * @returns {OmcEntity} The entity
+     */
+    const entityFrom = (keyValue, resolveFrom) => {
         const properties = {};
         for (const [path, spec] of Object.entries(mapping.properties ?? {})) {
-            const { value, withheld } = resolveProperty(spec, groupRowsForKey, tables);
+            const { value, withheld } = resolveProperty(spec, resolveFrom, tables);
             if (withheld) {
                 notes.push({
                     kind: 'propertyWithheld',
@@ -242,21 +301,45 @@ function buildEntityType(mapping, tables, options, notes) {
                     detail: `${path} not set: ${withheld}`,
                 });
             }
-            if (value !== null && value !== undefined) setPath(properties, path, value);
+            if (value !== null && value !== undefined) setPath(properties, path, value, shape);
         }
 
-        const [firstRow] = groupRowsForKey;
+        const [firstRow] = resolveFrom;
         for (const [propertyPath, entries] of Object.entries(mapping.notes ?? {})) {
             const noteList = buildNotes(entries, firstRow);
-            if (noteList.length) setPath(properties, propertyPath, noteList);
+            if (noteList.length) setPath(properties, propertyPath, noteList, shape);
         }
 
-        const customData = buildCustomData(mapping.customData, groupRowsForKey, consumed);
+        const customData = buildCustomData(mapping.customData, resolveFrom, consumed);
         if (customData.length) properties.customData = customData;
 
-        entities.set(keyValue, createEntity({
+        return createEntity({
             entityType, key: keyValue, properties, options,
-        }));
+        });
+    };
+
+    for (const [keyValue, groupRowsForKey] of groups) {
+        if (grain === 'group') {
+            // The rows resolve together: what they disagree on is withheld, because a fact about
+            // one take does not become a fact about the scene covering it.
+            entities.set(keyValue, entityFrom(keyValue, groupRowsForKey));
+            continue;
+        }
+        // At row grain each row builds its own entity, and rows sharing a key are folded. Usually
+        // there is one row and the fold is a no-op. Where there are several — one row per comment,
+        // all naming the same file — folding is what turns three rows into one entity carrying
+        // three annotations, because `mergeEntity` unions arrays by value. Keeping the last row and
+        // discarding the rest, which is what this used to do, silently lost the other two.
+        for (const row of groupRowsForKey) {
+            const entity = entityFrom(keyValue, [row]);
+            const held = entities.get(keyValue);
+            if (!held) {
+                entities.set(keyValue, entity);
+                continue;
+            }
+            const merged = omcMerge.mergeEntity(held, entity, { prefer: 'existing', emptyAsNull: true });
+            if (merged) entities.set(keyValue, merged);
+        }
     }
 
     return entities;
@@ -300,6 +383,10 @@ function applyEdges(mapping, tables, groupsByKey, registry, options) {
                 const result = omcEdges.edgeCreate({
                     fromEntity: source.get(keyValue),
                     toEntity: target,
+                    // Which relationship, where the target type is reachable through more than one.
+                    // Optional: a mapping that does not say falls back to edgeCreate's own choice,
+                    // which is what every mapping here did before.
+                    intrinsicEdge: edge.edgeKey ?? null,
                     inverse: Boolean(edge.inverse),
                 });
                 if (!result) continue;
@@ -342,23 +429,19 @@ export function buildEntities({ tables, mappings, options = {} }) {
     const notes = [];
 
     const registry = new Map();
-    const groupsByType = new Map();
+    // Per mapping, not per entityType: two mappings may build the same type from different tables,
+    // and each one's edges must be applied against its own rows.
+    const built = [];
 
     for (const mapping of mappings) {
         const entities = buildEntityType(mapping, tables, resolved, notes);
-        registry.set(mapping.entityType, entities);
+        mergeInto(registry, mapping.entityType, entities, notes);
 
-        const rows = tables[mapping.table];
-        groupsByType.set(mapping.entityType, mapping.grain === 'group'
-            ? groupRows(rows, mapping.key, mapping.skipWhenKeyEmpty)
-            : new Map(rows
-                .filter((r) => !mapping.skipWhenKeyEmpty
-                    || (r[mapping.key] !== null && r[mapping.key] !== undefined && r[mapping.key] !== ''))
-                .map((r) => [String(r[mapping.key]), [r]])));
+        built.push({ mapping, groups: rowsByKey(mapping, tables[mapping.table]) });
     }
 
-    for (const mapping of mappings) {
-        applyEdges(mapping, tables, groupsByType.get(mapping.entityType), registry, resolved);
+    for (const { mapping, groups } of built) {
+        applyEdges(mapping, tables, groups, registry, resolved);
     }
 
     const entitiesByType = Object.fromEntries(

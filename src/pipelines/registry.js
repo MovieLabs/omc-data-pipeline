@@ -1,3 +1,4 @@
+import frameio from '../sources/frameio/pipeline.js';
 import scriptE from '../sources/scriptE/pipeline.js';
 import yamdu from '../sources/yamdu/pipeline.js';
 
@@ -16,7 +17,7 @@ import '../types.js'; // Type definitions, resolved globally by JSDoc
  * @memberof namespace:DataPipeline
  * @type {Array<DataPipeline.PipelineDefinition>}
  */
-export const pipelines = [scriptE, yamdu];
+export const pipelines = [scriptE, yamdu, frameio];
 
 const byId = new Map(pipelines.map((p) => [p.pipelineId, p]));
 

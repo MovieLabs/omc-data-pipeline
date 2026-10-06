@@ -297,6 +297,9 @@
  *   API rather than a delivery declares `minFiles: 0` and no roles.
  * @property {Array<DataPipeline.PipelineOption>} [options] - Settings chosen **per run**, as data
  *   so a caller can render a form for a pipeline it has never seen.
+ * @property {Array<DataPipeline.PipelineDataset>} [datasets] - Tabular data this pipeline produces.
+ *   Declaring one lets a caller configure a mapping template against it; without any, the pipeline
+ *   only ever maps its own way.
  * @property {Array<string>} [secrets] - Names of the credentials a run needs, e.g. `['yamdu']`. The
  *   pipeline never learns where they are kept: the caller resolves each name and the run reads it
  *   from {@link DataPipeline.PipelineContext}`.secret`. Declaring them means a caller can resolve
@@ -373,6 +376,28 @@
  *   as a note rather than the caller having to describe them in advance.
  * @property {DataPipeline.OmcOptions} [omcOptions] - Identifier scope, schema version and
  *   seed namespace. Supplied per run, never read from module state.
+ * @property {Object.<string, Array<Object>>} [mappings] - Mapping templates by dataset name, as
+ *   `omcMapping` consumes them. A pipeline that declares {@link DataPipeline.PipelineDataset}s uses
+ *   the template configured against a dataset in place of its own built-in mapping, which is what
+ *   lets the OMC a pipeline produces be changed by editing a template rather than by editing the
+ *   pipeline and cutting a release. Absent, the pipeline maps its own way.
+ */
+
+/**
+ * Tabular data a pipeline produces, declared so a caller can offer a mapping template against it.
+ *
+ * The same idea as `roles` and `options`: data, so a caller that has never heard of this pipeline
+ * can still offer the right thing. `columns` is what a template author needs before any run has
+ * happened — you cannot map a column you cannot see.
+ * @memberof DataPipeline
+ * @typedef {Object} PipelineDataset
+ * @property {string} name - Machine-readable name, and the key under
+ *   {@link DataPipeline.PipelineRunRequest}`.mappings`.
+ * @property {string} label - Human-readable name, shown in a picker.
+ * @property {string} [description] - What one row of it is.
+ * @property {Array<string>} [produces] - Entity types the built-in mapping emits, for display.
+ * @property {Array<string>} [columns] - The columns every row carries. A source with user-defined
+ *   fields may add more at run time, so this is the floor rather than the whole set.
  */
 
 /**

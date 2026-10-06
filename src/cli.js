@@ -3,7 +3,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { dayPaths, omcPath, repoRoot } from './lib/paths.js';
-import { catalog, fsContext, runPipeline } from './pipelines/index.js';
+import { catalog, createContext, fsContext, runPipeline } from './pipelines/index.js';
 import * as scriptE from './sources/scriptE/index.js';
 
 /** Source adapters, keyed by the `--source` value, which is also the directory name. */
@@ -30,8 +30,73 @@ Options:
   --schema-version      OMC-JSON schema version URL             (omc, run)
   --pipeline <id>       Pipeline to run, e.g. script-e          (run only)
   --dir <path>          Directory of files to feed it           (run only)
+  --setting k=v         Project setting, repeatable             (run only)
+  --option k=v          Pipeline option, repeatable             (run only)
   --out <path>          Write the OMC here instead of stdout    (run only)
+
+A pipeline that reads an API takes no files, so --dir is omitted for those. It needs its
+credential in the environment instead — see SECRET_ENV in this file — and usually a setting:
+
+  YAMDU_TOKEN=…   node src/cli.js run --pipeline yamdu   --setting yamduProjectId=1234
+  FRAMEIO_TOKEN=… node src/cli.js run --pipeline frameio --setting frameioProjectId=<uuid>
 `;
+
+/**
+ * Where a pipeline's declared credential comes from when running here.
+ *
+ * The CLI is the one caller with no secret store to consult, so the environment is it. This mirrors
+ * what Labkoat-API's `secrets.js` does for the service — the pipeline itself declares only the
+ * *name* and never learns where it came from, which is the whole point of that contract.
+ *
+ * @type {Object.<string, string>}
+ */
+const SECRET_ENV = {
+    yamdu: 'YAMDU_TOKEN',
+    frameio: 'FRAMEIO_TOKEN',
+};
+
+/**
+ * Parse repeatable `key=value` arguments.
+ *
+ * @param {Array<string>} [pairs] - As supplied on the command line
+ * @param {string} flag - The flag name, for the error
+ * @returns {Object.<string, string>} The parsed pairs
+ * @throws {Error} On an argument with no `=`
+ */
+function keyValues(pairs, flag) {
+    return Object.fromEntries((pairs ?? []).map((pair) => {
+        const at = pair.indexOf('=');
+        if (at < 1) throw new Error(`--${flag} expects key=value, got "${pair}"`);
+        return [pair.slice(0, at), pair.slice(at + 1)];
+    }));
+}
+
+/**
+ * Resolve the credentials a pipeline declared, from the environment.
+ *
+ * A name with no mapping, or a mapping whose variable is unset, is refused here by name — the
+ * alternative is a request going out with `Bearer undefined` and coming back a 401 that says
+ * nothing about which credential was missing.
+ *
+ * @param {Array<string>} [names] - The pipeline's declared `secrets`
+ * @returns {Object.<string, string>} The resolved credentials
+ * @throws {Error} When one cannot be resolved
+ */
+function secretsFromEnv(names = []) {
+    const secrets = {};
+    for (const name of names) {
+        const variable = SECRET_ENV[name];
+        const value = variable ? process.env[variable] : undefined;
+        if (!value) {
+            const where = variable
+                ? `Set ${variable} in the environment and run again.`
+                : `Add it to SECRET_ENV in ${path.basename(import.meta.filename)}.`;
+            throw new Error(`This pipeline needs the credential "${name}". ${where}`);
+        }
+        secrets[name] = value;
+    }
+    return secrets;
+}
 
 /** Print paths relative to the repo root — absolute Windows paths swamp the output. */
 const rel = (p) => path.relative(repoRoot, p);
@@ -47,6 +112,8 @@ async function main() {
             'schema-version': { type: 'string' },
             'pipeline': { type: 'string' },
             'dir': { type: 'string' },
+            'setting': { type: 'string', multiple: true },
+            'option': { type: 'string', multiple: true },
             'out': { type: 'string' },
         },
     });
@@ -182,33 +249,51 @@ function listPipelines() {
  */
 async function runPipelineCommand(values, omcOptions) {
     const { pipeline: pipelineId, dir, out } = values;
-    if (!pipelineId || !dir) throw new Error('run needs both --pipeline and --dir');
+    if (!pipelineId) throw new Error('run needs --pipeline');
 
     const definition = catalog().find((p) => p.pipelineId === pipelineId);
     if (!definition) throw new Error(`Unknown pipeline "${pipelineId}". Try: node src/cli.js pipelines`);
 
+    const settings = keyValues(values.setting, 'setting');
+    const options = keyValues(values.option, 'option');
+    const secrets = secretsFromEnv(definition.secrets);
+
+    // A pipeline that reads an API declares no roles and takes no files, so there is no directory
+    // to scan and asking for one would be asking for something meaningless.
     const { roles } = definition.inputs;
-    const fallback = roles.find((r) => !r.match)?.role ?? roles[0].role;
-    const names = (await readdir(dir, { withFileTypes: true }))
-        .filter((e) => e.isFile())
-        .map((e) => e.name)
-        .sort((a, b) => a.localeCompare(b));
+    const takesFiles = roles.length > 0 && (definition.inputs.maxFiles ?? 1) > 0;
+    if (takesFiles && !dir) throw new Error(`${pipelineId} reads files, so run needs --dir`);
 
-    const inputs = names.map((fileName) => ({
-        role: roles.find((r) => r.match && new RegExp(r.match, 'i').test(fileName))?.role ?? fallback,
-        fileName,
-        ref: fileName,
-    }));
+    const inputs = [];
+    if (takesFiles) {
+        const fallback = roles.find((r) => !r.match)?.role ?? roles[0].role;
+        const names = (await readdir(dir, { withFileTypes: true }))
+            .filter((e) => e.isFile())
+            .map((e) => e.name)
+            .sort((a, b) => a.localeCompare(b));
+        inputs.push(...names.map((fileName) => ({
+            role: roles.find((r) => r.match && new RegExp(r.match, 'i').test(fileName))?.role ?? fallback,
+            fileName,
+            ref: fileName,
+        })));
+    }
 
-    console.log(`\n=== ${pipelineId} over ${rel(path.resolve(dir))} ===`);
+    console.log(`\n=== ${pipelineId}${takesFiles ? ` over ${rel(path.resolve(dir))}` : ''} ===`);
     for (const input of inputs) console.log(`  ${input.role.padEnd(10)} ${input.fileName}`);
+    for (const [k, v] of Object.entries(settings)) console.log(`  setting    ${k}=${v}`);
 
-    const context = fsContext({
-        baseDir: dir,
-        options: omcOptions,
-        onProgress: ({ stage, message }) => console.log(`  [${stage}] ${message ?? ''}`),
-    });
-    const result = await runPipeline({ pipelineId, inputs, omcOptions }, context);
+    const onProgress = ({ stage, message }) => console.log(`  [${stage}] ${message ?? ''}`);
+    // `fsContext` is the file-reading variant; a pipeline that reads an API never calls `read`, and
+    // giving it a context that throws on `read` is more honest than pointing it at a directory it
+    // has no business in.
+    const context = takesFiles
+        ? fsContext({
+            baseDir: dir, secrets, options: omcOptions, onProgress,
+        })
+        : createContext({ secrets, options: omcOptions, onProgress });
+    const result = await runPipeline({
+        pipelineId, inputs, options, settings, omcOptions,
+    }, context);
 
     for (const [entityType, count] of Object.entries(result.report.counts)) {
         console.log(`  ${entityType}: ${count} entities`);

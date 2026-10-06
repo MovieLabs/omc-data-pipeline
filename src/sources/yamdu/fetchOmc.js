@@ -1,48 +1,7 @@
-import { BASE_URL, PAGE_SIZE } from './endpoints.js';
+import { responseDetail, transportDetail } from '../../lib/http.js';
 import '../../types.js'; // Type definitions, resolved globally by JSDoc
 
-/**
- * Describe why a request never produced a response, unwrapping the `cause` chain.
- *
- * Worth the trouble because the message on its own is nearly always the useless `fetch failed`.
- * What identifies the fault — `ECONNRESET`, `ETIMEDOUT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — is on
- * the cause underneath it, and discarding that turns a diagnosable failure into a mystery.
- *
- * @param {Error} err - The rejected request
- * @returns {string} A one-line description
- */
-function transportDetail(err) {
-    const parts = [];
-    for (let cur = err; cur; cur = cur.cause) {
-        const code = cur.code ? ` (${cur.code}${cur.syscall ? ` on ${cur.syscall}` : ''})` : '';
-        parts.push(`${cur.message ?? cur}${code}`);
-    }
-    return parts.join(' <- ');
-}
-
-/**
- * Summarise what the API said on a non-2xx, for the note the run reports.
- *
- * Yamdu answers most failures with JSON but not all of them, so an unparseable body is reported as
- * text rather than being allowed to mask the status it arrived with. Tolerates a `fetch` whose
- * response has no `text()` — a stub need not implement the whole interface.
- *
- * @param {Object} res - The response
- * @returns {Promise<string>} A one-line description, empty when there is nothing to add
- */
-async function responseDetail(res) {
-    if (typeof res.text !== 'function') return '';
-    const body = await res.text().catch(() => '');
-    if (!body) return '';
-    try {
-        const json = JSON.parse(body);
-        const msg = json.message ?? json.error ?? json.detail
-            ?? (Array.isArray(json.errors) ? json.errors.map((e) => e.message ?? JSON.stringify(e)).join('; ') : null);
-        return ` — ${msg ?? JSON.stringify(json)}`;
-    } catch {
-        return ` — ${body.replace(/\s+/g, ' ').slice(0, 300)}`;
-    }
-}
+import { BASE_URL, PAGE_SIZE } from './endpoints.js';
 
 /**
  * Fetch one page from an OMC endpoint.

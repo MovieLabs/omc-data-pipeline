@@ -107,4 +107,55 @@ export function httpFetch(url, init = {}) {
     });
 }
 
+/**
+ * Describe why a request never produced a response, unwrapping the `cause` chain.
+ *
+ * Worth the trouble because the message on its own is nearly always the useless `fetch failed`.
+ * What identifies the fault — `ECONNRESET`, `ETIMEDOUT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — is on
+ * the cause underneath it, and discarding that turns a diagnosable failure into a mystery.
+ *
+ * @memberof namespace:DataPipeline
+ * @function transportDetail
+ * @param {Error} err - The rejected request
+ * @returns {string} A one-line description
+ */
+export function transportDetail(err) {
+    const parts = [];
+    for (let cur = err; cur; cur = cur.cause) {
+        const code = cur.code ? ` (${cur.code}${cur.syscall ? ` on ${cur.syscall}` : ''})` : '';
+        parts.push(`${cur.message ?? cur}${code}`);
+    }
+    return parts.join(' <- ');
+}
+
+/**
+ * Summarise what an API said on a non-2xx, for the note a run reports.
+ *
+ * Most APIs answer a failure with JSON but not all of them do, so an unparseable body is reported as
+ * text rather than being allowed to mask the status it arrived with. Tolerates a `fetch` whose
+ * response has no `text()` — a stub need not implement the whole interface.
+ *
+ * @memberof namespace:DataPipeline
+ * @function responseDetail
+ * @param {Object} res - The response
+ * @returns {Promise<string>} A one-line description, empty when there is nothing to add
+ */
+export async function responseDetail(res) {
+    if (typeof res.text !== 'function') return '';
+    const body = await res.text().catch(() => '');
+    if (!body) return '';
+    try {
+        const json = JSON.parse(body);
+        // `detail` and `title` are the JSON:API spelling, which Frame.io uses. Without them an
+        // error array falls through to `JSON.stringify` and a perfectly clear sentence — "Your
+        // Frame user is not linked to an Adobe ID" — reaches the user as a blob of punctuation.
+        const entry = (e) => e.message ?? e.detail ?? e.title ?? JSON.stringify(e);
+        const msg = json.message ?? json.error ?? json.detail
+            ?? (Array.isArray(json.errors) ? json.errors.map(entry).join('; ') : null);
+        return ` — ${msg ?? JSON.stringify(json)}`;
+    } catch {
+        return ` — ${body.replace(/\s+/g, ' ').slice(0, 300)}`;
+    }
+}
+
 export default httpFetch;

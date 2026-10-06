@@ -4,7 +4,7 @@
  * @memberof namespace:DataPipeline
  */
 
-export { httpFetch } from './http.js';
+export { httpFetch, transportDetail, responseDetail } from './http.js';
 export { parseXml, parseXmlFile, text, list } from './xml.js';
 export { parseCsv, parseCsvFile, toCsv } from './csv.js';
 export { pdfPageLines } from './pdf.js';

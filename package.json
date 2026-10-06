@@ -1,6 +1,6 @@
 {
   "name": "data-pipeline",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Process various data files for OMC ingestion",
   "license": "ISC",
   "author": "DML",
@@ -17,13 +17,13 @@
     "jsdoc": "jsdoc -c jsdoc.json",
     "build:types": "tsc",
     "link:local": "npm link omc-util",
-    "unlink:local": "npm unlink omc-util && npm install",
+    "unlink:local": "npm uninstall --no-save omc-util && npm install",
     "test": "node --test --test-reporter=spec test/**/*.test.js"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.2.5",
-    "omc-util": "git+https://github.com/MovieLabs/omc-util.git#semver:^1.4.0",
+    "omc-util": "git+https://github.com/MovieLabs/omc-util.git#semver:^1.11.0",
     "papaparse": "^5.5.3",
     "pdfjs-dist": "^6.1.200"
   },

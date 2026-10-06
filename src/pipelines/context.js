@@ -65,13 +65,16 @@ export function createContext({
  * @param {Object} [params]
  * @param {string} [params.baseDir] - Directory relative refs resolve against, and the boundary
  *   refs may not escape. Unrestricted when omitted.
+ * @param {Object.<string, string>} [params.secrets] - Credentials by name, as
+ *   {@link createContext} takes them. Passed through so a pipeline that reads both files and an
+ *   API is not forced to choose between a byte source and a credential.
  * @param {function(DataPipeline.PipelineProgress): void} [params.onProgress] - Progress sink
  * @param {AbortSignal} [params.signal] - Cancellation
  * @param {DataPipeline.OmcOptions} [params.options] - OMC options for the run
  * @returns {DataPipeline.PipelineContext} The context
  */
 export function fsContext({
-    baseDir, onProgress, signal, options,
+    baseDir, secrets, onProgress, signal, options,
 } = {}) {
     const resolve = (ref) => {
         if (!baseDir) return ref;
@@ -85,6 +88,7 @@ export function fsContext({
 
     return createContext({
         read: async (input) => readFile(resolve(input.ref)),
+        secrets,
         onProgress,
         signal,
         options,
