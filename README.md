@@ -1,5 +1,9 @@
 # Data-Pipeline
 
+> **Archived 2026-10-06.** These pipelines now live in Labkoat-API, under `pipelines/`, and are
+> developed and deployed there. This repository is read-only; its tags stay fetchable, and v1.1.0
+> is the code that was moved.
+
 Tools that read heterogeneous production data sources — PDFs, XML, spreadsheets — and
 prepare them for ingestion into OMC-JSON workflows.
 
